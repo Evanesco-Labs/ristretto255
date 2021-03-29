@@ -23,6 +23,14 @@ type nafLookupTable5 struct {
 	points [8]ProjCached
 }
 
+type NafLookupTable8Pro struct {
+	points [64]ProjCached
+}
+
+type NafLookupTable10Pro struct {
+	points [16384]ProjCached
+}
+
 // A precomputed lookup table for fixed-base, variable-time scalar muls.
 type nafLookupTable8 struct {
 	points [64]AffineCached
@@ -68,6 +76,28 @@ func (v *nafLookupTable5) FromP3(q *ProjP3) {
 	tmpP3 := ProjP3{}
 	tmpP1xP1 := ProjP1xP1{}
 	for i := 0; i < 7; i++ {
+		v.points[i+1].FromP3(tmpP3.FromP1xP1(tmpP1xP1.Add(&q2, &v.points[i])))
+	}
+}
+
+func (v *NafLookupTable8Pro)FromP3(q *ProjP3)  {
+	v.points[0].FromP3(q)
+	q2 := ProjP3{}
+	q2.Add(q, q)
+	tmpP3 := ProjP3{}
+	tmpP1xP1 := ProjP1xP1{}
+	for i := 0; i < 63; i++ {
+		v.points[i+1].FromP3(tmpP3.FromP1xP1(tmpP1xP1.Add(&q2, &v.points[i])))
+	}
+}
+
+func (v *NafLookupTable10Pro)FromP3(q *ProjP3)  {
+	v.points[0].FromP3(q)
+	q2 := ProjP3{}
+	q2.Add(q, q)
+	tmpP3 := ProjP3{}
+	tmpP1xP1 := ProjP1xP1{}
+	for i := 0; i < 16383; i++ {
 		v.points[i+1].FromP3(tmpP3.FromP1xP1(tmpP1xP1.Add(&q2, &v.points[i])))
 	}
 }
@@ -120,6 +150,15 @@ func (v *affineLookupTable) SelectInto(dest *AffineCached, x int8) {
 
 // Given odd x with 0 < x < 2^4, return x*Q (in variable time).
 func (v *nafLookupTable5) SelectInto(dest *ProjCached, x int8) {
+	*dest = v.points[x/2]
+}
+
+// Given odd x with 0 < x < 2^7, return x*Q (in variable time).
+func (v *NafLookupTable8Pro) SelectInto(dest *ProjCached, x int8) {
+	*dest = v.points[x/2]
+}
+
+func (v *NafLookupTable10Pro) SelectInto(dest *ProjCached, x int) {
 	*dest = v.points[x/2]
 }
 

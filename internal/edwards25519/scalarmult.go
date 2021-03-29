@@ -5,7 +5,9 @@
 package edwards25519
 
 import (
-	"github.com/gtank/ristretto255/internal/scalar"
+	"fmt"
+	"github.com/Evanesco-Labs/ristretto255/internal/scalar"
+	"time"
 )
 
 // Set v to x*B, where B is the Ed25519 basepoint, and return v.
@@ -99,12 +101,86 @@ func (v *ProjP3) ScalarMul(x *scalar.Scalar, q *ProjP3) *ProjP3 {
 	return v
 }
 
+func (v *ProjP3) ScalarMultWnaf(x *scalar.Scalar, q *ProjP3) *ProjP3 {
+	v.Zero()
+	var table nafLookupTable5
+	table.FromP3(q)
+	naf := x.NonAdjacentForm(5)
+
+	multiple := &ProjCached{}
+	tmp1 := &ProjP1xP1{}
+	tmp2 := &ProjP2{}
+	tmp2.Zero()
+	v.Zero()
+
+	for i := 255; i >= 0; i-- {
+		tmp1.Double(tmp2)
+		if naf[i] > 0 {
+			v.FromP1xP1(tmp1)
+			table.SelectInto(multiple, naf[i])
+			tmp1.Add(v, multiple)
+		} else if naf[i] < 0 {
+			v.FromP1xP1(tmp1)
+			table.SelectInto(multiple, -naf[i])
+			tmp1.Sub(v, multiple)
+		}
+		tmp2.FromP1xP1(tmp1)
+	}
+	v.FromP2(tmp2)
+
+	return v
+}
+
+func (v *ProjP3) MultiscalarMul_opt(scalars []*scalar.Scalar, elements []*ProjP3) *ProjP3 {
+	v.Zero()
+	if len(scalars) != len(elements) {
+		panic("called MultiscalarMul with different size inputs")
+	}
+	n := len(scalars)
+	tables := make([]projLookupTable, n)
+	for i, p := range elements {
+		tables[i].FromP3(p)
+	}
+
+	digits := make([][64]int8, n)
+	for i, s := range scalars {
+		digits[i] = s.SignedRadix16()
+	}
+	multiple := &ProjCached{}
+	tmp1 := &ProjP1xP1{}
+	tmp2 := &ProjP2{}
+
+	for i := 0; i < n; i++ {
+		tables[i].SelectInto(multiple, digits[i][63])
+		tmp1.Add(v, multiple)
+		v.FromP1xP1(tmp1)
+	}
+
+	for i := 62; i >= 0; i-- {
+		tmp2.FromP1xP1(tmp1) // tmp2 =    (prev) in P2 coords
+		tmp1.Double(tmp2)    // tmp1 =  2*(prev) in P1xP1 coords
+		tmp2.FromP1xP1(tmp1) // tmp2 =  2*(prev) in P2 coords
+		tmp1.Double(tmp2)    // tmp1 =  4*(prev) in P1xP1 coords
+		tmp2.FromP1xP1(tmp1) // tmp2 =  4*(prev) in P2 coords
+		tmp1.Double(tmp2)    // tmp1 =  8*(prev) in P1xP1 coords
+		tmp2.FromP1xP1(tmp1) // tmp2 =  8*(prev) in P2 coords
+		tmp1.Double(tmp2)    // tmp1 = 16*(prev) in P1xP1 coords
+		v.FromP1xP1(tmp1)    //    v = 16*(prev) in P3 coords
+		for j := 0; j < n; j++ {
+			tables[j].SelectInto(multiple, digits[j][i])
+			tmp1.Add(v, multiple)
+			v.FromP1xP1(tmp1)
+		}
+	}
+	return v
+}
+
 // Set v to the result of a multiscalar multiplication and return v.
 //
 // The multiscalar multiplication is sum(scalars[i]*points[i]).
 //
 // The multiscalar multiplication is performed in constant time.
-func (v *ProjP3) MultiscalarMul(scalars []scalar.Scalar, points []*ProjP3) *ProjP3 {
+func (v *ProjP3) MultiscalarMul(scalars []*scalar.Scalar, points []*ProjP3) *ProjP3 {
 	if len(scalars) != len(points) {
 		panic("called MultiscalarMul with different size inputs")
 	}
@@ -133,8 +209,9 @@ func (v *ProjP3) MultiscalarMul(scalars []scalar.Scalar, points []*ProjP3) *Proj
 		tmp1.Add(v, multiple) // tmp1 = v + x_(j,63)*Q in P1xP1 coords
 		v.FromP1xP1(tmp1)     // update v
 	}
-	tmp2.FromP3(v) // set up tmp2 = v in P2 coords for next iteration
+	//tmp2.FromP3(v) // set up tmp2 = v in P2 coords for next iteration
 	for i := 62; i >= 0; i-- {
+		tmp2.FromP3(v)
 		tmp1.Double(tmp2)    // tmp1 =  2*(prev) in P1xP1 coords
 		tmp2.FromP1xP1(tmp1) // tmp2 =  2*(prev) in P2 coords
 		tmp1.Double(tmp2)    // tmp1 =  4*(prev) in P1xP1 coords
@@ -149,7 +226,7 @@ func (v *ProjP3) MultiscalarMul(scalars []scalar.Scalar, points []*ProjP3) *Proj
 			tmp1.Add(v, multiple) // tmp1 = v + x_(j,i)*Q in P1xP1 coords
 			v.FromP1xP1(tmp1)     // update v
 		}
-		tmp2.FromP3(v) // set up tmp2 = v in P2 coords for next iteration
+		//tmp2.FromP3(v) // set up tmp2 = v in P2 coords for next iteration
 	}
 	return v
 }
@@ -233,7 +310,7 @@ func (v *ProjP3) VartimeDoubleBaseMul(a *scalar.Scalar, A *ProjP3, b *scalar.Sca
 // The multiscalar multiplication is sum(scalars[i]*points[i]).
 //
 // The multiscalar multiplication is performed in variable time.
-func (v *ProjP3) VartimeMultiscalarMul(scalars []scalar.Scalar, points []*ProjP3) *ProjP3 {
+func (v *ProjP3) VartimeMultiscalarMul(scalars []*scalar.Scalar, points []*ProjP3) *ProjP3 {
 	if len(scalars) != len(points) {
 		panic("called MultiscalarMul with different size inputs")
 	}
@@ -284,5 +361,229 @@ func (v *ProjP3) VartimeMultiscalarMul(scalars []scalar.Scalar, points []*ProjP3
 	}
 
 	v.FromP2(tmp2)
+	return v
+}
+func (v *ProjP3) VartimeMultiscalarMul_opt(scalars []*scalar.Scalar, points []*ProjP3) *ProjP3 {
+	if len(scalars) != len(points) {
+		panic("called MultiscalarMul with different size inputs")
+	}
+	v.Zero()
+	// Generalize double-base NAF computation to arbitrary sizes.
+	// Here all the points are dynamic, so we only use the smaller
+	// tables.
+	// Build lookup tables for each point
+	tables := make([]nafLookupTable5, len(points))
+	for i := range tables {
+		tables[i].FromP3(points[i])
+	}
+	// Compute a NAF for each scalar
+	nafs := make([][256]int8, len(scalars))
+	for i := range nafs {
+		nafs[i] = scalars[i].NonAdjacentForm(5)
+	}
+
+	multiple := &ProjCached{}
+	tmp1 := &ProjP1xP1{}
+	tmp2 := &ProjP2{}
+	tmp2.Zero()
+	v.Zero()
+
+	// Move from high to low bits, doubling the accumulator
+	// at each iteration and checking whether there is a nonzero
+	// coefficient to look up a multiple of.
+	//
+	// Skip trying to find the first nonzero coefficent, because
+	// searching might be more work than a few extra doublings.
+	for i := 255; i >= 0; i-- {
+		tmp1.Double(tmp2)
+
+		for j := range nafs {
+			if nafs[j][i] > 0 {
+				v.FromP1xP1(tmp1)
+				tables[j].SelectInto(multiple, nafs[j][i])
+				tmp1.Add(v, multiple)
+			} else if nafs[j][i] < 0 {
+				v.FromP1xP1(tmp1)
+				tables[j].SelectInto(multiple, -nafs[j][i])
+				tmp1.Sub(v, multiple)
+			}
+		}
+
+		tmp2.FromP1xP1(tmp1)
+	}
+
+	v.FromP2(tmp2)
+
+	return v
+}
+
+func (v *ProjP3) VartimeMultiscalarMul_GH(scalars []*scalar.Scalar, tables []NafLookupTable8Pro) *ProjP3 {
+	if len(scalars) != len(tables) {
+		panic("called MultiscalarMul with different size inputs")
+	}
+	v.Zero()
+	nafs := make([][256]int8, len(scalars))
+	for i := range nafs {
+		nafs[i] = scalars[i].NonAdjacentForm(8)
+	}
+
+	multiple := &ProjCached{}
+	tmp1 := &ProjP1xP1{}
+	tmp2 := &ProjP2{}
+	tmp2.Zero()
+	v.Zero()
+
+	// Move from high to low bits, doubling the accumulator
+	// at each iteration and checking whether there is a nonzero
+	// coefficient to look up a multiple of.
+	//
+	// Skip trying to find the first nonzero coefficent, because
+	// searching might be more work than a few extra doublings.
+	for i := 255; i >= 0; i-- {
+		tmp1.Double(tmp2)
+
+		for j := range nafs {
+			if nafs[j][i] > 0 {
+				v.FromP1xP1(tmp1)
+				tables[j].SelectInto(multiple, nafs[j][i])
+				tmp1.Add(v, multiple)
+			} else if nafs[j][i] < 0 {
+				v.FromP1xP1(tmp1)
+				tables[j].SelectInto(multiple, -nafs[j][i])
+				tmp1.Sub(v, multiple)
+			}
+		}
+
+		tmp2.FromP1xP1(tmp1)
+	}
+
+	v.FromP2(tmp2)
+	return v
+}
+
+func (v *ProjP3) VartimeMultiscalarMul_win8(scalars []*scalar.Scalar, points []*ProjP3) *ProjP3 {
+	if len(scalars) != len(points) {
+		panic("called MultiscalarMul with different size inputs")
+	}
+	v.Zero()
+	// Generalize double-base NAF computation to arbitrary sizes.
+	// Here all the points are dynamic, so we only use the smaller
+	// tables.
+	t0 := time.Now()
+	// Build lookup tables for each point
+	tables := make([]NafLookupTable8Pro, len(points))
+	for i := range tables {
+		tables[i].FromP3(points[i])
+	}
+	t1 := time.Now()
+	//Compute a NAF for each scalar
+	nafs := make([][256]int8, len(scalars))
+	for i := range nafs {
+		nafs[i] = scalars[i].NonAdjacentForm(8)
+	}
+	multiple := &ProjCached{}
+	tmp1 := &ProjP1xP1{}
+	tmp2 := &ProjP2{}
+	tmp2.Zero()
+	v.Zero()
+	fmt.Println(nafs[0])
+	// Move from high to low bits, doubling the accumulator
+	// at each iteration and checking whether there is a nonzero
+	// coefficient to look up a multiple of.
+	//
+	// Skip trying to find the first nonzero coefficent, because
+	// searching might be more work than a few extra doublings.
+	for i := 255; i >= 0; i-- {
+		tmp1.Double(tmp2)
+
+		for j := range nafs {
+			if nafs[j][i] > 0 {
+				v.FromP1xP1(tmp1)
+
+				tables[j].SelectInto(multiple, nafs[j][i])
+				tmp1.Add(v, multiple)
+			} else if nafs[j][i] < 0 {
+				v.FromP1xP1(tmp1)
+				tables[j].SelectInto(multiple, -nafs[j][i])
+				tmp1.Sub(v, multiple)
+			}
+		}
+
+		tmp2.FromP1xP1(tmp1)
+	}
+
+	v.FromP2(tmp2)
+	t3 := time.Now()
+	fmt.Println("make table: ", t1.Sub(t0))
+	fmt.Println("others: ", t3.Sub(t1))
+	return v
+}
+
+func (v *ProjP3) VartimeMultiscalarMul_win16(scalars []*scalar.Scalar, points []*ProjP3) *ProjP3 {
+	if len(scalars) != len(points) {
+		panic("called MultiscalarMul with different size inputs")
+	}
+	v.Zero()
+	// Generalize double-base NAF computation to arbitrary sizes.
+	// Here all the points are dynamic, so we only use the smaller
+	// tables.
+	t0 := time.Now()
+	// Build lookup tables for each point
+	tables := make([]NafLookupTable10Pro, len(points))
+	for i := range tables {
+		tables[i].FromP3(points[i])
+	}
+	t1 := time.Now()
+	//Compute a NAF for each scalar
+	nafs := make([][256]int, len(scalars))
+	for i := range nafs {
+		nafs[i] = scalars[i].NonAdjacentForm16(16)
+	}
+	t2 := time.Now()
+	fmt.Println(nafs[0])
+	multiple := &ProjCached{}
+	tmp1 := &ProjP1xP1{}
+	tmp2 := &ProjP2{}
+	tmp2.Zero()
+	v.Zero()
+
+	// Move from high to low bits, doubling the accumulator
+	// at each iteration and checking whether there is a nonzero
+	// coefficient to look up a multiple of.
+	//
+	// Skip trying to find the first nonzero coefficent, because
+	// searching might be more work than a few extra doublings.
+	count := 0
+	for i := 255; i >= 0; i-- {
+		tmp1.Double(tmp2)
+
+		for j := range nafs {
+			if nafs[j][i] > 0 {
+				count++
+				v.FromP1xP1(tmp1)
+				//startselect := time.Now()
+
+				tables[j].SelectInto(multiple, nafs[j][i])
+				//fmt.Println("select: ", time.Now().Sub(startselect))
+				//startadd := time.Now()
+				tmp1.Add(v, multiple)
+				//fmt.Println("add: ", time.Now().Sub(startadd))
+			} else if nafs[j][i] < 0 {
+				count++
+				v.FromP1xP1(tmp1)
+				tables[j].SelectInto(multiple, -nafs[j][i])
+				tmp1.Sub(v, multiple)
+			}
+		}
+
+		tmp2.FromP1xP1(tmp1)
+	}
+
+	v.FromP2(tmp2)
+	t3 := time.Now()
+	fmt.Println("make table: ", t1.Sub(t0))
+	fmt.Println("naf: ", t2.Sub(t1))
+	fmt.Println("others: ", t3.Sub(t2))
+	fmt.Println(count)
 	return v
 }

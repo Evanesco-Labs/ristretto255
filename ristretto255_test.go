@@ -7,7 +7,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/gtank/ristretto255/internal/radix51"
+	"github.com/Evanesco-Labs/ristretto255/internal/radix51"
 )
 
 func assertFeEqual(value, expect *radix51.FieldElement) {
@@ -49,12 +49,11 @@ func TestSqrtRatioM1(t *testing.T) {
 	assertFeEqual(new(radix51.FieldElement).Mul(new(radix51.FieldElement).Square(invSqrt4), four), one)
 
 	var tests = []sqrtRatioTest{
-		{u: zero, v: zero, sqrt: zero, choice: 1, negative: 0},
-		{u: zero, v: one, sqrt: zero, choice: 1, negative: 0},
-		{u: one, v: zero, sqrt: zero, choice: 0, negative: 0},
-		{u: two, v: one, sqrt: sqrt2i, choice: 0, negative: 0},
-		{u: four, v: one, sqrt: two, choice: 1, negative: 0},
-		{u: one, v: four, sqrt: invSqrt4, choice: 1, negative: 0},
+		{u: zero, v: zero, sqrt: zero, choice: 1, negative: 0},    // 0
+		{u: one, v: zero, sqrt: zero, choice: 0, negative: 0},     // 1
+		{u: two, v: one, sqrt: sqrt2i, choice: 0, negative: 0},    // 2
+		{u: four, v: one, sqrt: two, choice: 1, negative: 0},      // 3
+		{u: one, v: four, sqrt: invSqrt4, choice: 1, negative: 0}, // 4
 	}
 
 	for idx, tt := range tests {
@@ -243,33 +242,6 @@ func TestRistrettoFromUniformBytesTestVectors(t *testing.T) {
 	}
 }
 
-func TestEquivalentFromUniformBytes(t *testing.T) {
-	inputs := []string{
-		"edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff" +
-			"1200000000000000000000000000000000000000000000000000000000000000",
-		"edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f" +
-			"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
-		"0000000000000000000000000000000000000000000000000000000000000080" +
-			"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
-		"0000000000000000000000000000000000000000000000000000000000000000" +
-			"1200000000000000000000000000000000000000000000000000000000000080",
-	}
-	expected := "304282791023b73128d277bdcb5c7746ef2eac08dde9f2983379cb8e5ef0517f"
-
-	var element Element
-	for i, input := range inputs {
-		h, err := hex.DecodeString(input)
-		if err != nil {
-			t.Fatalf("#%d: bad hex encoding in test vector: %v", i, err)
-		}
-
-		element.FromUniformBytes(h[:])
-		if encoding := hex.EncodeToString(element.Encode(nil)); encoding != expected {
-			t.Errorf("#%d: expected %q, got %q", i, expected, encoding)
-		}
-	}
-}
-
 func TestMarshalScalar(t *testing.T) {
 	x := new(Scalar)
 	// generate an arbitrary scalar
@@ -301,64 +273,5 @@ func TestMarshalElement(t *testing.T) {
 	err = json.Unmarshal(text, y)
 	if err != nil || y.Equal(x) == 0 {
 		t.Fatalf("Error unmarshaling element from json: %s %v", text, err)
-	}
-}
-
-func TestElementSet(t *testing.T) {
-	// Test this, because the internal point type being hard-copyable isn't part of the spec.
-
-	el1 := NewElement().Zero()
-	el2 := NewElement().Base()
-
-	if el1.Equal(el2) == 1 {
-		t.Error("shouldn't be the same")
-	}
-
-	// Check new value
-	el1.Set(el2)
-
-	if el1.Equal(el2) == 0 {
-		t.Error("failed to set the value")
-	}
-
-	// Mutate source var
-	el2.Add(el2, el2)
-
-	if el1.Equal(el2) == 1 {
-		t.Error("shouldn't have changed")
-	}
-}
-
-func TestScalarSet(t *testing.T) {
-	// Test this, because the internal scalar representation being hard-copyable isn't part of the spec.
-
-	// 32-byte little endian value of "1"
-	scOne := make([]byte, 32)
-	scOne[0] = 0x01
-
-	sc1, sc2 := NewScalar(), NewScalar().Zero()
-
-	// sc1 <- 1
-	sc1.Decode(scOne)
-
-	// 1 != 0
-	if sc1.Equal(sc2) == 1 {
-		t.Error("shouldn't be the same")
-	}
-
-	// sc2 <- sc1
-	sc2.Set(sc1)
-
-	// 1 == 1
-	if sc1.Equal(sc2) == 0 {
-		t.Error("failed to set the value")
-	}
-
-	// sc1 <- 1 + 1
-	sc1.Add(sc1, sc1)
-
-	// 2 != 1
-	if sc1.Equal(sc2) == 1 {
-		t.Error("shouldn't have changed")
 	}
 }

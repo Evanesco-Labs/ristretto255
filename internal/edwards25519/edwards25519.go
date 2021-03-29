@@ -12,8 +12,25 @@
 package edwards25519
 
 import (
-	"github.com/gtank/ristretto255/internal/radix51"
+	"github.com/Evanesco-Labs/ristretto255/internal/radix51"
+
 )
+
+var (
+	sqrtM1 = fieldElementFromDecimal(
+		"19681161376707505956807079304988542015446066515923890162744021073123829784752")
+	sqrtADMinusOne = fieldElementFromDecimal(
+		"25063068953384623474111414158702152701244531502492656460079210482610430750235")
+	invSqrtAMinusD = fieldElementFromDecimal(
+		"54469307008909316920995813868745141605393597292927456921205312896311721017578")
+	oneMinusDSQ = fieldElementFromDecimal(
+		"1159843021668779879193775521855586647937357759715417654439879720876111806838")
+	dMinusOneSQ = fieldElementFromDecimal(
+		"40440834346308536858101042469323190826248399146238708352240133220865137265952")
+)
+
+
+
 
 // D is a constant in the curve equation.
 var D = &radix51.FieldElement{929955233495203, 466365720129213,
@@ -325,4 +342,82 @@ func (v *AffineCached) CondNeg(cond int) *AffineCached {
 	radix51.CondSwap(&v.YplusX, &v.YminusX, cond)
 	v.T2d.CondNeg(&v.T2d, cond)
 	return v
+}
+
+func GenTableMap(points []*ProjP3) map[[32]byte]NafLookupTable8Pro {
+	tablemap := make(map[[32]byte]NafLookupTable8Pro)
+	for _, point := range points {
+		var text [32]byte
+		copy(text[:],point.Encode([]byte{}))
+		var table NafLookupTable8Pro
+		table.FromP3(point)
+		tablemap[text] = table
+	}
+	return tablemap
+}
+
+func GenGHtable(points []*ProjP3) []NafLookupTable8Pro {
+	table := make([]NafLookupTable8Pro,len(points))
+	for i,g := range points{
+		table[i].FromP3(g)
+	}
+	return table
+}
+
+func (v *ProjP3)Encode(b []byte) []byte {
+	tmp := &radix51.FieldElement{}
+
+	// u1 = (z0 + y0) * (z0 - y0)
+	u1 := &radix51.FieldElement{}
+	u1.Add(&v.Z, &v.Y).Mul(u1, tmp.Sub(&v.Z, &v.Y))
+
+	// u2 = x0 * y0
+	u2 := &radix51.FieldElement{}
+	u2.Mul(&v.X, &v.Y)
+
+	// Ignore was_square since this is always square
+	// (_, invsqrt) = SQRT_RATIO_M1(1, u1 * u2^2)
+	invSqrt := &radix51.FieldElement{}
+	feSqrtRatio(invSqrt, radix51.One, tmp.Square(u2).Mul(tmp, u1))
+
+	// den1 = invsqrt * u1
+	// den2 = invsqrt * u2
+	den1, den2 := &radix51.FieldElement{}, &radix51.FieldElement{}
+	den1.Mul(invSqrt, u1)
+	den2.Mul(invSqrt, u2)
+	// z_inv = den1 * den2 * t0
+	zInv := &radix51.FieldElement{}
+	zInv.Mul(den1, den2).Mul(zInv, &v.T)
+
+	// ix0 = x0 * SQRT_M1
+	// iy0 = y0 * SQRT_M1
+	ix0, iy0 := &radix51.FieldElement{}, &radix51.FieldElement{}
+	ix0.Mul(&v.X, sqrtM1)
+	iy0.Mul(&v.Y, sqrtM1)
+	// enchanted_denominator = den1 * INVSQRT_A_MINUS_D
+	enchantedDenominator := &radix51.FieldElement{}
+	enchantedDenominator.Mul(den1, invSqrtAMinusD)
+
+	// rotate = IS_NEGATIVE(t0 * z_inv)
+	rotate := tmp.Mul(&v.T, zInv).IsNegative()
+
+	// x = CT_SELECT(iy0 IF rotate ELSE x0)
+	// y = CT_SELECT(ix0 IF rotate ELSE y0)
+	x, y := &radix51.FieldElement{}, &radix51.FieldElement{}
+	x.Select(iy0, &v.X, rotate)
+	y.Select(ix0, &v.Y, rotate)
+	// z = z0
+	z := &v.Z
+	// den_inv = CT_SELECT(enchanted_denominator IF rotate ELSE den2)
+	denInv := &radix51.FieldElement{}
+	denInv.Select(enchantedDenominator, den2, rotate)
+
+	// y = CT_NEG(y, IS_NEGATIVE(x * z_inv))
+	y.CondNeg(y, tmp.Mul(x, zInv).IsNegative())
+
+	// s = CT_ABS(den_inv * (z - y))
+	s := tmp.Sub(z, y).Mul(tmp, denInv).Abs(tmp)
+
+	// Return the canonical little-endian encoding of s.
+	return s.Bytes(b)
 }

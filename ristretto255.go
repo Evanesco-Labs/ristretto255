@@ -16,10 +16,9 @@ import (
 	"bytes"
 	"encoding/base64"
 	"errors"
-
-	"github.com/gtank/ristretto255/internal/edwards25519"
-	"github.com/gtank/ristretto255/internal/radix51"
-	"github.com/gtank/ristretto255/internal/scalar"
+	"github.com/Evanesco-Labs/ristretto255/internal/edwards25519"
+	"github.com/Evanesco-Labs/ristretto255/internal/radix51"
+	"github.com/Evanesco-Labs/ristretto255/internal/scalar"
 )
 
 // Constants from draft-hdevalence-cfrg-ristretto-01, Section 3.1.
@@ -41,15 +40,13 @@ type Element struct {
 	r edwards25519.ProjP3
 }
 
+type NafLookupTable8Pro struct {
+	table edwards25519.NafLookupTable8Pro
+}
+
 // NewElement returns a new Element set to the identity value.
 func NewElement() *Element {
 	return (&Element{}).Zero()
-}
-
-// Set sets the value of e to x and returns e.
-func (e *Element) Set(x *Element) *Element {
-	*e = *x
-	return e
 }
 
 // Equal returns 1 if e is equivalent to ee, and 0 otherwise.
@@ -296,6 +293,11 @@ func (e *Element) ScalarMult(s *Scalar, p *Element) *Element {
 	return e
 }
 
+func (e *Element)ScalarMultWnaf(s *Scalar,p *Element) *Element  {
+	e.r.ScalarMultWnaf(&s.s,&p.r)
+	return e
+}
+
 // MultiScalarMult sets e = sum(s[i] * p[i]), and returns e.
 //
 // Execution time depends only on the lengths of the two slices, which must match.
@@ -304,12 +306,26 @@ func (e *Element) MultiScalarMult(s []*Scalar, p []*Element) *Element {
 		panic("ristretto255: MultiScalarMult invoked with mismatched slice lengths")
 	}
 	points := make([]*edwards25519.ProjP3, len(p))
-	scalars := make([]scalar.Scalar, len(s))
+	scalars := make([]*scalar.Scalar, len(s))
 	for i := range s {
 		points[i] = &p[i].r
-		scalars[i] = s[i].s
+		scalars[i] = &s[i].s
 	}
 	e.r.MultiscalarMul(scalars, points)
+	return e
+}
+
+func (e *Element) MultiScalarMult_opt(s []*Scalar, p []*Element) *Element {
+	if len(p) != len(s) {
+		panic("ristretto255: MultiScalarMult invoked with mismatched slice lengths")
+	}
+	points := make([]*edwards25519.ProjP3, len(p))
+	scalars := make([]*scalar.Scalar, len(s))
+	for i := range s {
+		points[i] = &p[i].r
+		scalars[i] = &s[i].s
+	}
+	e.r.MultiscalarMul_opt(scalars, points)
 	return e
 }
 
@@ -318,16 +334,45 @@ func (e *Element) MultiScalarMult(s []*Scalar, p []*Element) *Element {
 // Execution time depends on the inputs.
 func (e *Element) VarTimeMultiScalarMult(s []*Scalar, p []*Element) *Element {
 	if len(p) != len(s) {
-		panic("ristretto255: MultiScalarMult invoked with mismatched slice lengths")
+		return nil
 	}
 	points := make([]*edwards25519.ProjP3, len(p))
-	scalars := make([]scalar.Scalar, len(s))
+	scalars := make([]*scalar.Scalar, len(s))
 	for i := range s {
 		points[i] = &p[i].r
-		scalars[i] = s[i].s
+		scalars[i] = &s[i].s
 	}
-	e.r.VartimeMultiscalarMul(scalars, points)
+	e.r.VartimeMultiscalarMul_opt(scalars, points)
 	return e
+}
+
+func (e *Element) MultiScalarMult_GH(s []*Scalar, table []NafLookupTable8Pro) *Element {
+	if len(table) != len(s) {
+		return nil
+	}
+	scalars := make([]*scalar.Scalar, len(s))
+	for i := range s {
+		scalars[i] = &s[i].s
+	}
+	edtable := make([]edwards25519.NafLookupTable8Pro, len(scalars))
+	for i := range table{
+		edtable[i] = table[i].table
+	}
+	e.r.VartimeMultiscalarMul_GH(scalars, edtable)
+	return e
+}
+
+func GenGHtable(points []*Element) []NafLookupTable8Pro {
+	elements := make([]*edwards25519.ProjP3, len(points))
+	for i := range points {
+		elements[i] = &points[i].r
+	}
+	tables := edwards25519.GenGHtable(elements)
+	result := make([]NafLookupTable8Pro, len(points))
+	for i := range tables {
+		result[i] = NafLookupTable8Pro{tables[i]}
+	}
+	return result
 }
 
 // VarTimeDoubleScalarBaseMult sets e = a * A + b * B, where B is the canonical

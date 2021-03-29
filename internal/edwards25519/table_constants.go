@@ -5,7 +5,7 @@
 package edwards25519
 
 import (
-	"github.com/gtank/ristretto255/internal/radix51"
+	"github.com/Evanesco-Labs/ristretto255/internal/radix51"
 )
 
 var (

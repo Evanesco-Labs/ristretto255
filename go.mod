@@ -1,3 +1,3 @@
-module github.com/gtank/ristretto255
+module github.com/Evanesco-Labs/ristretto255
 
-go 1.11
+go 1.14

@@ -5,11 +5,13 @@
 package edwards25519
 
 import (
+	"fmt"
 	"testing"
 	"testing/quick"
+	"time"
 
-	"github.com/gtank/ristretto255/internal/radix51"
-	"github.com/gtank/ristretto255/internal/scalar"
+	"github.com/Evanesco-Labs/ristretto255/internal/radix51"
+	"github.com/Evanesco-Labs/ristretto255/internal/scalar"
 )
 
 // quickCheckConfig will make each quickcheck test run (2^6 * -quickchecks)
@@ -148,7 +150,7 @@ func TestMultiScalarMulMatchesBasepointMul(t *testing.T) {
 		z[31] &= 127
 		var p, q1, q2, q3, check ProjP3
 
-		p.MultiscalarMul([]scalar.Scalar{x, y, z}, []*ProjP3{&B, &B, &B})
+		p.MultiscalarMul([]*scalar.Scalar{&x, &y, &z}, []*ProjP3{&B, &B, &B})
 
 		q1.BasepointMul(&x)
 		q2.BasepointMul(&y)
@@ -203,7 +205,7 @@ func TestVartimeMultiScalarMulMatchesBasepointMul(t *testing.T) {
 		z[31] &= 127
 		var p, q1, q2, q3, check ProjP3
 
-		p.VartimeMultiscalarMul([]scalar.Scalar{x, y, z}, []*ProjP3{&B, &B, &B})
+		p.VartimeMultiscalarMul([]*scalar.Scalar{&x, &y, &z}, []*ProjP3{&B, &B, &B})
 
 		q1.BasepointMul(&x)
 		q2.BasepointMul(&y)
@@ -250,9 +252,68 @@ func BenchmarkMultiscalarMulSize8(t *testing.B) {
 	x := dalekScalar
 
 	for i := 0; i < t.N; i++ {
-		p.MultiscalarMul([]scalar.Scalar{x, x, x, x, x, x, x, x}, []*ProjP3{&B, &B, &B, &B, &B, &B, &B, &B})
+		p.MultiscalarMul([]*scalar.Scalar{&x, &x, &x, &x, &x, &x, &x, &x}, []*ProjP3{&B, &B, &B, &B, &B, &B, &B, &B})
 	}
+
 }
 
 // TODO: add BenchmarkVartimeMultiscalarMulSize8 (need to have
 // different scalars & points to measure cache effects).
+
+func TestMulti(t *testing.T) {
+
+	var scalars []*scalar.Scalar
+	var elements []*ProjP3
+	v := new(ProjP3)
+	v.Zero()
+	n := 1024*256/64
+
+	for i:=0;i<n;i++ {
+		sca := dalekScalar
+		scalars = append(scalars, &sca)
+		ele := B
+		elements = append(elements,&ele)
+	}
+
+	//t0 := time.Now()
+	//table := GenGHtable(elements)
+	t1 := time.Now()
+	//v = v.VartimeMultiscalarMul_GH(scalars,table)
+	v= v.VartimeMultiscalarMul_win8(scalars,elements)
+	fmt.Println(time.Now().Sub(t1))
+
+	check := new(ProjP3)
+	check.Zero()
+	for i:=0;i<n;i++ {
+		check.Add(check,new(ProjP3).ScalarMul(scalars[i],elements[i]))
+	}
+
+	fmt.Println(check.Equal(v))
+
+
+}
+
+func BenchmarkSelectinto(b  *testing.B)  {
+	var scalars []*scalar.Scalar
+	var elements []*ProjP3
+	v := new(ProjP3)
+	v.Zero()
+	n := 1024*256/32
+
+	for i:=0;i<n;i++ {
+		sca := dalekScalar
+		scalars = append(scalars, &sca)
+		ele := B
+		elements = append(elements,&ele)
+	}
+	tables := make([]NafLookupTable10Pro, len(elements))
+	for i := range tables {
+		tables[i].FromP3(elements[i])
+	}
+	multiple := &ProjCached{}
+	k := 23
+	b.ResetTimer()
+	for i:=0;i<b.N;i++ {
+		tables[0].SelectInto(multiple, k)
+	}
+}

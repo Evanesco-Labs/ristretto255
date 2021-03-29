@@ -977,6 +977,71 @@ func (s *Scalar) NonAdjacentForm(w uint) [256]int8 {
 	return naf
 }
 
+func (s *Scalar) NonAdjacentForm16(w uint) [256]int {
+	// This implementation is adapted from the one
+	// in curve25519-dalek and is documented there:
+	// https://github.com/dalek-cryptography/curve25519-dalek/blob/f630041af28e9a405255f98a8a93adca18e4315b/src/scalar.rs#L800-L871
+	if s[31] > 127 {
+		panic("scalar has high bit set illegally")
+	}
+	if w < 2 {
+		panic("w must be at least 2 by the definition of NAF")
+	} else if w > 16 {
+		panic("NAF digits must fit in int")
+	}
+
+	var naf [256]int
+	var digits [5]uint64
+
+	for i := 0; i < 4; i++ {
+		digits[i] = binary.LittleEndian.Uint64(s[i*8:])
+	}
+
+	width := uint64(1 << w)
+	windowMask := uint64(width - 1)
+
+	pos := uint(0)
+	carry := uint64(0)
+	for pos < 256 {
+		indexU64 := pos / 64
+		indexBit := pos % 64
+		var bitBuf uint64
+		if indexBit < 64-w {
+			// This window's bits are contained in a single u64
+			bitBuf = digits[indexU64] >> indexBit
+		} else {
+			// Combine the current 64 bits with bits from the next 64
+			bitBuf = (digits[indexU64] >> indexBit) | (digits[1+indexU64] << (64 - indexBit))
+		}
+
+		// Add carry into the current window
+		window := carry + (bitBuf & windowMask)
+
+		if window&1 == 0 {
+			// If the window value is even, preserve the carry and continue.
+			// Why is the carry preserved?
+			// If carry == 0 and window & 1 == 0,
+			//    then the next carry should be 0
+			// If carry == 1 and window & 1 == 0,
+			//    then bit_buf & 1 == 1 so the next carry should be 1
+			pos += 1
+			continue
+		}
+
+		if window < width/2 {
+			carry = 0
+			naf[pos] = int(window)
+		} else {
+			carry = 1
+			naf[pos] = int(window) - int(width)
+		}
+
+		pos += w
+	}
+	return naf
+}
+
+
 func (s *Scalar) SignedRadix16() [64]int8 {
 	if s[31] > 127 {
 		panic("scalar has high bit set illegally")
